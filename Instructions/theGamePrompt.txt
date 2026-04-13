@@ -13,6 +13,9 @@ more characters should arrive periodically. Most of the characters that arrive s
 
 The world: starts as a grass plains biome surrounded by a dark haze. Then, at some point, new biomes will be discovered and they will be added to the map. the biomes should have different resources for construction and technology building, and climates for different plants and animals to live in. 
 
+Notes--
+the option to photograph something will only appear when you are talking to the farmer or researcher.
+
 -----------------
 The AI:
 

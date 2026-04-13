@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B43ADBCF2F8DA53D00A56FE6 /* LlamaSwift in Frameworks */ = {isa = PBXBuildFile; productRef = B43ADBCE2F8DA53D00A56FE6 /* LlamaSwift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		B43ADACF2F8D655300A56FE6 /* VillageWorld.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VillageWorld.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B43ADBCF2F8DA53D00A56FE6 /* LlamaSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = VillageWorld;
 			packageProductDependencies = (
+				B43ADBCE2F8DA53D00A56FE6 /* LlamaSwift */,
 			);
 			productName = VillageWorld;
 			productReference = B43ADACF2F8D655300A56FE6 /* VillageWorld.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = B43ADAC62F8D655300A56FE6;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B43ADBCD2F8DA53D00A56FE6 /* XCRemoteSwiftPackageReference "llama" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B43ADAD02F8D655300A56FE6 /* Products */;
 			projectDirPath = "";
@@ -324,6 +333,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B43ADBCD2F8DA53D00A56FE6 /* XCRemoteSwiftPackageReference "llama" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mattt/llama.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.8781.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B43ADBCE2F8DA53D00A56FE6 /* LlamaSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B43ADBCD2F8DA53D00A56FE6 /* XCRemoteSwiftPackageReference "llama" */;
+			productName = LlamaSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B43ADAC72F8D655300A56FE6 /* Project object */;
 }

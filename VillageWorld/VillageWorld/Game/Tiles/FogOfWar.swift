@@ -80,6 +80,10 @@ final class FogOfWar {
         revealed.contains(pos)
     }
 
+    /// Full set of revealed grid positions — used by CharacterSpawner to
+    /// find boundary tiles for NPC entry points.
+    var revealedPositions: Set<GridPosition> { revealed }
+
     // MARK: - Texture
 
     private static func sharedFogTexture() -> SKTexture {

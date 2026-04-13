@@ -2,14 +2,9 @@
 //  GameScene.swift
 //  VillageWorld
 //
-//  Main SKScene — tile map, player, camera, fog of war, tap-to-move,
-//  drag-to-walk, and pinch-to-zoom.
-//
-//  Controls:
-//    Tap   → A* pathfind to tapped tile
-//    Drag  → Walk continuously in the dragged direction (4-directional)
-//            Direction updates mid-drag at the next tile boundary.
-//    Pinch → Zoom (0.5× – 2.0× camera scale)
+//  Main SKScene.  Owns and orchestrates every game system:
+//    Phase 1 — tile map, player, fog of war, camera, tap/drag/pinch input
+//    Phase 2 — characters, state machines, spawner, interaction manager
 //
 
 import SpriteKit
@@ -17,6 +12,10 @@ import GameplayKit
 import UIKit
 
 final class GameScene: SKScene {
+
+    // MARK: - Callbacks (wired by AppState to avoid import cycles)
+
+    var onCharacterTapped: ((CharacterEntity) -> Void)?
 
     // MARK: - Nodes
 
@@ -26,9 +25,12 @@ final class GameScene: SKScene {
 
     // MARK: - Systems
 
-    private var tileMapManager: TileMapManager!
-    private var fogOfWar:       FogOfWar!
-    private var movement:       CharacterMovement!
+    private var tileMapManager:     TileMapManager!
+    private var fogOfWar:           FogOfWar!
+    private var movement:           CharacterMovement!
+    private var interactionManager  = InteractionManager()
+    private var spawner             = CharacterSpawner()
+    private let taskQueue           = TaskQueue()
 
     // MARK: - Grid State
 
@@ -36,26 +38,31 @@ final class GameScene: SKScene {
     private var playerGridPos = GridPosition(col: WorldGenerator.columns / 2,
                                              row: WorldGenerator.rows    / 2)
 
+    // MARK: - Character Registry
+
+    /// All living character entities (excludes the player).
+    private(set) var characters:     [CharacterEntity]       = []
+    /// Fast sprite→entity look-up used by tap detection.
+    private      var characterNodes: [UUID: SKSpriteNode]    = [:]
+
     // MARK: - Touch / Drag State
 
-    /// Scene-space position where the current touch began.
-    private var touchOrigin: CGPoint = .zero
-    /// True once the touch has moved past the drag threshold.
-    private var isDragging = false
-    /// The last snapped direction while dragging.
+    private var touchOrigin:  CGPoint       = .zero
+    private var isDragging:   Bool          = false
     private var dragDirection: GridDirection? = nil
-    /// True while a drag-driven tile step is in progress.
-    /// The step's completion callback will chain the next step.
-    private var isDragWalking = false
+    private var isDragWalking: Bool         = false
+    private let dragThreshold: CGFloat      = 18
 
-    private let dragThreshold: CGFloat = 18   // points before drag is recognised
-
-    // MARK: - Pinch / Zoom State
+    // MARK: - Pinch / Zoom
 
     private var pinchStartScale: CGFloat = 1.0
-    private var isPinching = false
-    private let minCamScale: CGFloat = 0.5
-    private let maxCamScale: CGFloat = 2.0
+    private var isPinching: Bool         = false
+    private let minCamScale: CGFloat     = 0.5
+    private let maxCamScale: CGFloat     = 2.0
+
+    // MARK: - Timing
+
+    private var lastUpdateTime: TimeInterval = 0
 
     // MARK: - Scene Lifecycle
 
@@ -64,6 +71,7 @@ final class GameScene: SKScene {
         buildWorld()
         buildPlayer()
         buildCamera()
+        placeStarterCharacters()
         attachGestureRecognisers(to: view)
     }
 
@@ -89,16 +97,17 @@ final class GameScene: SKScene {
     private func buildPlayer() {
         playerNode = SKSpriteNode(texture: PlayerTexture.make(),
                                   color:   .clear,
-                                  size:    CGSize(width: 32, height: 40))
-        playerNode.position  = tileMapManager.tileCenter(col: playerGridPos.col, row: playerGridPos.row)
-        playerNode.zPosition = 5
+                                  size:    CGSize(width: 28, height: 36))
+        playerNode.position  = tileMapManager.tileCenter(col: playerGridPos.col,
+                                                          row: playerGridPos.row)
+        playerNode.zPosition = 6   // above characters (zPos 5)
         playerNode.name      = "player"
         addChild(playerNode)
     }
 
     private func buildCamera() {
         addChild(cameraNode)
-        camera              = cameraNode
+        camera = cameraNode
         cameraNode.position = playerNode.position
         let halfW = CGFloat(TileMapManager.columns) * TileMapManager.tileSize / 2
         let halfH = CGFloat(TileMapManager.rows)    * TileMapManager.tileSize / 2
@@ -106,6 +115,45 @@ final class GameScene: SKScene {
             SKConstraint.positionX(SKRange(lowerLimit: -halfW, upperLimit: halfW)),
             SKConstraint.positionY(SKRange(lowerLimit: -halfH, upperLimit: halfH)),
         ]
+    }
+
+    // MARK: - Starter Characters
+
+    private func placeStarterCharacters() {
+        let starters: [(name: String, role: CharacterRole, col: Int, row: Int)] = [
+            ("Sage",  .researcher, 32, 34),
+            ("Rowan", .farmer,     30, 32),
+            ("Stone", .worker,     34, 32),
+        ]
+        for s in starters {
+            let pos    = GridPosition(col: s.col, row: s.row)
+            let sprite = CharacterSpriteFactory.make(role: s.role)
+            sprite.position = tileMapManager.tileCenter(col: s.col, row: s.row)
+            let entity = CharacterEntity(
+                name:         s.name,
+                role:         s.role,
+                personality:  CharacterPersonalities.random(for: s.role),
+                spriteNode:   sprite,
+                homePosition: pos
+            )
+            registerCharacter(entity)
+        }
+    }
+
+    // MARK: - Character Registration
+
+    private func registerCharacter(_ entity: CharacterEntity) {
+        entity.spriteNode.name = "character_\(entity.id)"
+        addChild(entity.spriteNode)
+        characters.append(entity)
+        characterNodes[entity.id] = entity.spriteNode
+
+        entity.stateMachine = CharacterStateMachine(
+            entity:   entity,
+            movement: movement,
+            tileMap:  tileMapNode,
+            grid:     grid
+        )
     }
 
     // MARK: - Gesture Recognisers
@@ -134,8 +182,8 @@ final class GameScene: SKScene {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard !isPinching, let touch = touches.first else { return }
-        touchOrigin  = touch.location(in: self)
-        isDragging   = false
+        touchOrigin   = touch.location(in: self)
+        isDragging    = false
         dragDirection = nil
     }
 
@@ -146,32 +194,25 @@ final class GameScene: SKScene {
         let delta   = CGPoint(x: current.x - touchOrigin.x,
                               y: current.y - touchOrigin.y)
         let mag     = hypot(delta.x, delta.y)
-
         guard mag >= dragThreshold else { return }
 
-        // Slide the D-pad centre: keep touchOrigin exactly dragThreshold behind
-        // the finger in the current direction of motion. This means the direction
-        // is always measured relative to *recent* finger movement, not the original
-        // touch point — so any of the 4 directions is equally reachable from
-        // wherever the finger currently sits.
+        // Slide the D-pad centre: always dragThreshold behind the finger so
+        // any direction is reachable with equal effort from anywhere.
         touchOrigin = CGPoint(x: current.x - (delta.x / mag) * dragThreshold,
                               y: current.y - (delta.y / mag) * dragThreshold)
 
         guard let dir = GridDirection.from(delta: delta, threshold: dragThreshold) else { return }
 
         if !isDragging {
-            // Transition from tap to drag: cancel any A* path in flight.
             isDragging = true
             playerNode.removeAllActions()
             isDragWalking = false
         }
 
-        let directionChanged = dir != dragDirection
+        let changed = dir != dragDirection
         dragDirection = dir
 
-        if directionChanged && isDragWalking {
-            // Cancel the in-flight tile step and redirect immediately from
-            // wherever the player currently is.
+        if changed && isDragWalking {
             playerNode.removeAllActions()
             isDragWalking = false
             stepInDragDirection()
@@ -184,17 +225,22 @@ final class GameScene: SKScene {
         guard let touch = touches.first else { return }
 
         if !isDragging {
-            // Short tap — A* pathfind to the tapped tile.
-            let tapPt = touch.location(in: tileMapNode)
-            if let dest = tileMapManager.gridPosition(fromTileMapPoint: tapPt),
-               grid[dest.col][dest.row].isWalkable {
-                tapMovePlayer(to: dest)
+            let locInScene = touch.location(in: self)
+
+            // Character tap takes priority over tile tap.
+            if let tapped = characters.first(where: { $0.spriteNode.contains(locInScene) }) {
+                onCharacterTapped?(tapped)
+            } else {
+                let tapInTileMap = touch.location(in: tileMapNode)
+                if let dest = tileMapManager.gridPosition(fromTileMapPoint: tapInTileMap),
+                   grid[dest.col][dest.row].isWalkable {
+                    tapMovePlayer(to: dest)
+                }
             }
         }
 
         isDragging    = false
         dragDirection = nil
-        // isDragWalking clears itself in the completion callback.
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -202,7 +248,7 @@ final class GameScene: SKScene {
         dragDirection = nil
     }
 
-    // MARK: - Tap Movement (A* pathfind)
+    // MARK: - Tap Movement (A*)
 
     private func tapMovePlayer(to destination: GridPosition) {
         playerNode.removeAllActions()
@@ -210,7 +256,6 @@ final class GameScene: SKScene {
 
         let localPos = tileMapNode.convert(playerNode.position, from: self)
         let current  = tileMapManager.gridPosition(fromTileMapPoint: localPos) ?? playerGridPos
-
         guard let path = movement.findPath(from: current, to: destination) else { return }
 
         playerNode.run(movement.walkAction(along: path, tileMap: tileMapNode) { [weak self] pos in
@@ -223,12 +268,9 @@ final class GameScene: SKScene {
 
     private func stepInDragDirection() {
         guard isDragging, let dir = dragDirection else {
-            isDragWalking = false
-            return
+            isDragWalking = false; return
         }
 
-        // Re-derive grid position from sprite's pixel position so cancellations
-        // mid-tile don't leave playerGridPos stale.
         let localPos = tileMapNode.convert(playerNode.position, from: self)
         let current  = tileMapManager.gridPosition(fromTileMapPoint: localPos) ?? playerGridPos
         let next     = dir.neighbor(of: current)
@@ -236,17 +278,10 @@ final class GameScene: SKScene {
         guard next.col >= 0, next.col < TileMapManager.columns,
               next.row >= 0, next.row < TileMapManager.rows,
               grid[next.col][next.row].isWalkable
-        else {
-            isDragWalking = false   // hit a wall; touchesMoved will retry if direction changes
-            return
-        }
+        else { isDragWalking = false; return }
 
         isDragWalking = true
-
-        let dest = tileMapManager.tileCenter(col: next.col, row: next.row)
-
-        // Scale duration by actual distance so the character always moves at
-        // a constant speed, even when a direction change interrupts mid-tile.
+        let dest     = tileMapManager.tileCenter(col: next.col, row: next.row)
         let dist     = hypot(dest.x - playerNode.position.x, dest.y - playerNode.position.y)
         let duration = max(Double(dist / TileMapManager.tileSize) / CharacterMovement.defaultSpeed, 0.05)
 
@@ -257,7 +292,6 @@ final class GameScene: SKScene {
                 self.playerGridPos = next
                 self.fogOfWar.reveal(around: next, radius: 7)
                 self.isDragWalking = false
-                // Chain next step — uses latest dragDirection at tile boundary.
                 self.stepInDragDirection()
             },
         ]))
@@ -266,6 +300,30 @@ final class GameScene: SKScene {
     // MARK: - Per-Frame Update
 
     override func update(_ currentTime: TimeInterval) {
+        let dt = lastUpdateTime == 0 ? 0 : min(currentTime - lastUpdateTime, 0.1)
+        lastUpdateTime = currentTime
+
+        // Tick character state machines
+        for char in characters {
+            char.stateMachine?.update(deltaTime: dt)
+        }
+
+        // Proximity interactions
+        interactionManager.update(deltaTime: dt, characters: characters, tileMap: tileMapNode)
+
+        // NPC spawning
+        if let newChar = spawner.update(deltaTime: dt,
+                                         currentCount: characters.count,
+                                         revealedPositions: fogOfWar.revealedPositions,
+                                         grid: grid) {
+            newChar.spriteNode.position = tileMapManager.tileCenter(
+                col: newChar.homePosition.col,
+                row: newChar.homePosition.row
+            )
+            registerCharacter(newChar)
+        }
+
+        // Smooth camera follow
         let lerp: CGFloat = 0.10
         cameraNode.position.x += (playerNode.position.x - cameraNode.position.x) * lerp
         cameraNode.position.y += (playerNode.position.y - cameraNode.position.y) * lerp
@@ -274,10 +332,9 @@ final class GameScene: SKScene {
 
 // MARK: - Grid Direction
 
-private enum GridDirection {
+private enum GridDirection: Equatable {
     case up, down, left, right
 
-    /// Returns the neighbouring grid position one step in this direction.
     func neighbor(of pos: GridPosition) -> GridPosition {
         switch self {
         case .up:    return GridPosition(col: pos.col,     row: pos.row + 1)
@@ -287,17 +344,11 @@ private enum GridDirection {
         }
     }
 
-    /// Snaps a drag delta to the dominant axis.
-    /// Returns nil if the delta hasn't crossed `threshold` yet.
-    /// Note: SpriteKit scene Y increases upward, so positive dy = upward swipe.
     static func from(delta: CGPoint, threshold: CGFloat) -> GridDirection? {
-        let mag = (delta.x * delta.x + delta.y * delta.y).squareRoot()
-        guard mag >= threshold else { return nil }
-        if abs(delta.x) >= abs(delta.y) {
-            return delta.x > 0 ? .right : .left
-        } else {
-            return delta.y > 0 ? .up : .down
-        }
+        guard hypot(delta.x, delta.y) >= threshold else { return nil }
+        return abs(delta.x) >= abs(delta.y)
+            ? (delta.x > 0 ? .right : .left)
+            : (delta.y > 0 ? .up    : .down)
     }
 }
 
@@ -313,27 +364,27 @@ private extension Comparable {
 
 private enum PlayerTexture {
     static func make() -> SKTexture {
-        let size = CGSize(width: 16, height: 20)
+        let size = CGSize(width: 14, height: 18)
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { _ in
             let ctx = UIGraphicsGetCurrentContext()!
             // Legs
-            UIColor(red: 0.20, green: 0.20, blue: 0.70, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 4, y: 14, width: 3, height: 6))
-            ctx.fill(CGRect(x: 9, y: 14, width: 3, height: 6))
+            UIColor(red: 0.18, green: 0.18, blue: 0.65, alpha: 1).setFill()
+            ctx.fill(CGRect(x: 3,  y: 13, width: 3, height: 5))
+            ctx.fill(CGRect(x: 8,  y: 13, width: 3, height: 5))
             // Body
-            UIColor(red: 0.25, green: 0.50, blue: 0.90, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 3, y: 8, width: 10, height: 7))
+            UIColor(red: 0.20, green: 0.48, blue: 0.88, alpha: 1).setFill()
+            ctx.fill(CGRect(x: 2,  y: 7,  width: 10, height: 7))
             // Head
             UIColor(red: 0.95, green: 0.80, blue: 0.65, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 4, y: 1, width: 8, height: 8))
+            ctx.fill(CGRect(x: 3,  y: 1,  width: 8,  height: 7))
             // Eyes
             UIColor.black.setFill()
-            ctx.fill(CGRect(x: 6, y: 4, width: 1, height: 1))
-            ctx.fill(CGRect(x: 9, y: 4, width: 1, height: 1))
+            ctx.fill(CGRect(x: 5,  y: 4,  width: 1,  height: 1))
+            ctx.fill(CGRect(x: 8,  y: 4,  width: 1,  height: 1))
             // Hair
-            UIColor(red: 0.45, green: 0.28, blue: 0.10, alpha: 1).setFill()
-            ctx.fill(CGRect(x: 4, y: 0, width: 8, height: 2))
+            UIColor(red: 0.42, green: 0.26, blue: 0.08, alpha: 1).setFill()
+            ctx.fill(CGRect(x: 3,  y: 0,  width: 8,  height: 2))
         }
         let tex = SKTexture(image: image)
         tex.filteringMode = .nearest

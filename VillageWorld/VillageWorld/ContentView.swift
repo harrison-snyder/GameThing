@@ -21,10 +21,12 @@ struct ContentView: View {
             HUDOverlay()
                 .environmentObject(appState)
 
-            // Dialogue panel — shown when a character is tapped (Phase 2+)
+            // Dialogue panel
             if appState.isDialogueActive {
-                // DialogueView will be wired in Phase 4
-                EmptyView()
+                DialogueView()
+                    .environmentObject(appState)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.spring(duration: 0.3), value: appState.isDialogueActive)
             }
         }
         .statusBarHidden()

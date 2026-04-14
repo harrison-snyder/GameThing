@@ -2,7 +2,7 @@
 //  WorldGenerator.swift
 //  VillageWorld
 //
-//  Generates the initial 64×64 world.
+//  Generates the initial 128×128 world.
 //  Starts as void (dark, unwalkable) and carves a small, smooth
 //  starting biome in the centre using overlapping ellipses for
 //  an organic but clean boundary.
@@ -11,14 +11,14 @@
 import Foundation
 
 struct WorldGenerator {
-    static let columns = 64
-    static let rows    = 64
+    static let columns = 128
+    static let rows    = 128
 
     /// Returns a fully populated grid[col][row].
     static func generate() -> [[TileCell]] {
         // Fill everything with void first
         var grid = Array(
-            repeating: Array(repeating: TileCell.void(), count: rows),
+            repeating: Array(repeating: TileCell.defaultGrass(), count: rows),
             count: columns
         )
 
@@ -67,6 +67,56 @@ struct WorldGenerator {
             }
         }
     }
+
+    private static func carveExtraBiomes(in grid: inout [[TileCell]], rng: inout SeededRNG) {
+    let biomeCount = 4
+    let startCX = columns / 2
+    let startCY = rows / 2
+
+    for _ in 0..<biomeCount {
+        var col: Int
+        var row: Int
+
+        repeat {
+            col = Int(rng.next() % UInt64(columns - 12)) + 6
+            row = Int(rng.next() % UInt64(rows - 12)) + 6
+
+            let dx = col - startCX
+            let dy = row - startCY
+            let tooCloseToStart = dx * dx + dy * dy < 18 * 18
+
+            if !tooCloseToStart {
+                break
+            }
+        } while true
+
+        let cx = Double(col)
+        let cy = Double(row)
+
+        let blobs: [(cx: Double, cy: Double, rx: Double, ry: Double)] = [
+            (cx, cy, 6.0 + Double(rng.next() % 5), 6.0 + Double(rng.next() % 5)),
+            (cx - 2.0, cy + 1.0, 3.0 + Double(rng.next() % 4), 3.0 + Double(rng.next() % 4)),
+            (cx + 2.0, cy - 2.0, 3.0 + Double(rng.next() % 4), 3.0 + Double(rng.next() % 4)),
+        ]
+
+        for c in 0..<columns {
+            for r in 0..<rows {
+                let x = Double(c)
+                let y = Double(r)
+
+                let inside = blobs.contains { blob in
+                    let dx = (x - blob.cx) / blob.rx
+                    let dy = (y - blob.cy) / blob.ry
+                    return (dx * dx + dy * dy) <= 1.0
+                }
+
+                if inside {
+                    grid[c][r] = TileCell.defaultGrass()
+                }
+            }
+        }
+    }
+}
 
     // MARK: - Feature Placement
 

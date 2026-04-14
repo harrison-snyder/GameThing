@@ -28,6 +28,14 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(.spring(duration: 0.3), value: appState.isDialogueActive)
             }
+
+            // Tech tree overlay
+            if appState.isTechTreeVisible {
+                TechTreeView()
+                    .environmentObject(appState)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .animation(.spring(duration: 0.25), value: appState.isTechTreeVisible)
+            }
         }
         .statusBarHidden()
     }

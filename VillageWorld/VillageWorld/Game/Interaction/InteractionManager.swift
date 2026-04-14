@@ -6,7 +6,7 @@
 //  Checks pairwise character distances every `checkInterval` seconds.
 //  If two eligible characters are within `proximityTiles` tiles:
 //    — 30 % chance to trigger a brief "chat" (chat bubble + interaction state)
-//    — The LLM generates actual dialogue in Phase 3; for now we show "…"
+//    — The LLM generates actual dialogue for the bubble text.
 //
 
 import SpriteKit
@@ -17,11 +17,16 @@ final class InteractionManager {
 
     private let proximityTiles: Int   = 2
     private let checkInterval: Double = 8.0   // seconds between proximity sweeps
-    private let chatDuration:  Double = 4.0   // seconds an interaction lasts
+    private let chatDuration:  Double = 5.0   // seconds an interaction lasts
 
     // MARK: - State
 
     private var checkTimer: TimeInterval = 0
+
+    // MARK: - AI (wired by GameScene/AppState)
+
+    var dialogueGenerator: DialogueGenerator?
+    var interactionContext: (() -> InteractionContext)?
 
     // MARK: - Callback (wired by GameScene to handle player-tap interactions)
 
@@ -66,8 +71,34 @@ final class InteractionManager {
         a.stateMachine?.enterInteracting()
         b.stateMachine?.enterInteracting()
 
-        showBubble(on: a.spriteNode, text: "…")
-        showBubble(on: b.spriteNode, text: "…")
+        // Show placeholder immediately, then replace with LLM text
+        showBubble(on: a.spriteNode, text: "...")
+        showBubble(on: b.spriteNode, text: "...")
+
+        // Generate real dialogue if LLM is available
+        if let generator = dialogueGenerator {
+            let ctx = interactionContext?() ?? InteractionContext()
+            Task {
+                let textA = await generator.generateFullDialogue(
+                    character: a,
+                    playerInput: "\(b.name) walks up to you and says hello.",
+                    context: ctx
+                )
+                let shortA = String(textA.prefix(40))
+
+                let textB = await generator.generateFullDialogue(
+                    character: b,
+                    playerInput: "\(a.name) says: \(shortA)",
+                    context: ctx
+                )
+                let shortB = String(textB.prefix(40))
+
+                await MainActor.run {
+                    self.showBubble(on: a.spriteNode, text: shortA.isEmpty ? "Hello!" : shortA)
+                    self.showBubble(on: b.spriteNode, text: shortB.isEmpty ? "Hi!" : shortB)
+                }
+            }
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + chatDuration) { [weak a, weak b] in
             a?.stateMachine?.exitInteracting()
@@ -80,9 +111,12 @@ final class InteractionManager {
     private func showBubble(on sprite: SKSpriteNode, text: String) {
         sprite.childNode(withName: "chatBubble")?.removeFromParent()
 
-        let label        = SKLabelNode(text: text)
+        // Truncate for display
+        let displayText = text.count > 35 ? String(text.prefix(32)) + "..." : text
+
+        let label        = SKLabelNode(text: displayText)
         label.fontName   = "Courier-Bold"
-        label.fontSize   = 9
+        label.fontSize   = 7
         label.fontColor  = .black
         label.horizontalAlignmentMode = .center
         label.verticalAlignmentMode   = .center

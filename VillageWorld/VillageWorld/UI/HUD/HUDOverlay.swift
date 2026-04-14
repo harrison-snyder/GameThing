@@ -4,6 +4,7 @@
 //
 //  Phase 1: resource bar + title.
 //  Phase 2: character info card shown when the player taps a character.
+//  Phase 4: tech tree button, task indicators, role context in card.
 //
 
 import SwiftUI
@@ -34,6 +35,22 @@ struct HUDOverlay: View {
                 .shadow(color: .black.opacity(0.8), radius: 2, x: 1, y: 1)
                 .padding(.leading, 16)
             Spacer()
+
+            // Tech tree button
+            Button {
+                appState.isTechTreeVisible.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "book.closed.fill")
+                        .font(.caption)
+                    Text("\(appState.techTreeManager.entries.count)")
+                        .font(.system(.caption, design: .monospaced).bold())
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+            .padding(.trailing, 16)
         }
         .padding(.top, 8)
     }
@@ -46,9 +63,20 @@ struct HUDOverlay: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(char.name)
                         .font(.system(.headline, design: .monospaced))
-                    Text(char.role.rawValue.capitalized)
-                        .font(.caption.bold())
-                        .foregroundStyle(roleColor(char.role))
+                    HStack(spacing: 6) {
+                        Text(char.role.rawValue.capitalized)
+                            .font(.caption.bold())
+                            .foregroundStyle(roleColor(char.role))
+                        // Show state badge
+                        if char.currentState == .working {
+                            Text("Working")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 }
                 Spacer()
                 Button {
@@ -67,6 +95,9 @@ struct HUDOverlay: View {
                 .foregroundStyle(.secondary)
                 .italic()
 
+            // Role-specific context line
+            roleContext(for: char)
+
             Button {
                 appState.startDialogue(with: char)
             } label: {
@@ -76,12 +107,47 @@ struct HUDOverlay: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(roleColor(char.role))
-            .disabled(appState.isDialogueActive)
+            .disabled(appState.isDialogueActive || char.currentState == .working)
         }
         .padding(14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
+    }
+
+    // MARK: - Role Context
+
+    @ViewBuilder
+    private func roleContext(for char: CharacterEntity) -> some View {
+        switch char.role {
+        case .researcher:
+            let count = appState.techTreeManager.entries.filter { $0.category == .technology }.count
+            Text("Discoveries: \(count)")
+                .font(.caption2)
+                .foregroundStyle(.purple.opacity(0.8))
+        case .farmer:
+            let crops = appState.techTreeManager.entries.filter { $0.category == .crop || $0.category == .animal }.count
+            Text("Farm plans: \(crops)")
+                .font(.caption2)
+                .foregroundStyle(.green.opacity(0.8))
+        case .worker:
+            if let task = char.currentTask {
+                Text("Task: \(task.description)")
+                    .font(.caption2)
+                    .foregroundStyle(.orange.opacity(0.8))
+            } else {
+                Text("Idle — ready for work")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        case .npc:
+            if let lastMemory = char.memory.last {
+                Text(lastMemory.summary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
     }
 
     // MARK: - Resource Bar

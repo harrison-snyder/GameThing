@@ -16,6 +16,7 @@ final class GameScene: SKScene {
     // MARK: - Callbacks (wired by AppState to avoid import cycles)
 
     var onCharacterTapped: ((CharacterEntity) -> Void)?
+    var onTaskCompleted:   ((GameTask) -> Void)?
 
     // MARK: - Nodes
 
@@ -28,7 +29,7 @@ final class GameScene: SKScene {
     private var tileMapManager:     TileMapManager!
     private var fogOfWar:           FogOfWar!
     private var movement:           CharacterMovement!
-    private var interactionManager  = InteractionManager()
+    private(set) var interactionManager = InteractionManager()
     private var spawner             = CharacterSpawner()
     private let taskQueue           = TaskQueue()
 
@@ -327,6 +328,90 @@ final class GameScene: SKScene {
         let lerp: CGFloat = 0.10
         cameraNode.position.x += (playerNode.position.x - cameraNode.position.x) * lerp
         cameraNode.position.y += (playerNode.position.y - cameraNode.position.y) * lerp
+    }
+    // MARK: - Task Assignment (Phase 4)
+
+    func assignTask(_ task: GameTask, to character: CharacterEntity) {
+        taskQueue.enqueue(task)
+
+        // Wire completion callback from state machine
+        character.stateMachine?.onTaskCompleted = { [weak self] completedTask in
+            self?.taskQueue.markComplete(id: completedTask.id)
+            DispatchQueue.main.async {
+                self?.onTaskCompleted?(completedTask)
+            }
+        }
+
+        // Clamp target to valid grid bounds
+        let clampedTarget = GridPosition(
+            col: max(0, min(task.targetPosition.col, TileMapManager.columns - 1)),
+            row: max(0, min(task.targetPosition.row, TileMapManager.rows - 1))
+        )
+        // We need a walkable target; find nearest walkable tile if needed
+        let target: GridPosition
+        if clampedTarget.col >= 0, clampedTarget.col < TileMapManager.columns,
+           clampedTarget.row >= 0, clampedTarget.row < TileMapManager.rows,
+           grid[clampedTarget.col][clampedTarget.row].isWalkable {
+            target = clampedTarget
+        } else {
+            target = character.gridPosition  // fallback: work in place
+        }
+
+        let finalTask = GameTask(
+            id: task.id,
+            type: task.type,
+            assignedTo: task.assignedTo,
+            targetPosition: target,
+            duration: task.duration,
+            progress: 0,
+            status: .inProgress
+        )
+
+        character.stateMachine?.enterWorking(task: finalTask)
+    }
+
+    // MARK: - Built Item Placement (Phase 4)
+
+    func placeBuiltItem(name: String, near position: GridPosition) {
+        // Find a free walkable spot near the target
+        let col = max(0, min(position.col, TileMapManager.columns - 1))
+        let row = max(0, min(position.row, TileMapManager.rows - 1))
+
+        let center = tileMapManager.tileCenter(col: col, row: row)
+
+        // Build a small pixel-art sprite for the item
+        let size = CGSize(width: 24, height: 24)
+        let color = UIColor(red: 0.3, green: 0.6, blue: 0.9, alpha: 1)
+        let itemNode = SKSpriteNode(color: color, size: size)
+        itemNode.position = center
+        itemNode.zPosition = 4  // below characters
+        itemNode.name = "builtItem_\(name)"
+
+        // Label
+        let label = SKLabelNode(text: name)
+        label.fontName = "Courier-Bold"
+        label.fontSize = 7
+        label.fontColor = .white
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .bottom
+        label.position = CGPoint(x: 0, y: size.height * 0.5 + 2)
+        itemNode.addChild(label)
+
+        // Pop-in animation
+        itemNode.setScale(0)
+        addChild(itemNode)
+        itemNode.run(.sequence([
+            .scale(to: 1.2, duration: 0.2),
+            .scale(to: 1.0, duration: 0.1),
+        ]))
+    }
+
+    // MARK: - Exploration Reveal (Phase 4)
+
+    func revealExploredArea(around position: GridPosition) {
+        let col = max(0, min(position.col, TileMapManager.columns - 1))
+        let row = max(0, min(position.row, TileMapManager.rows - 1))
+        fogOfWar.reveal(around: GridPosition(col: col, row: row), radius: 12)
     }
 }
 

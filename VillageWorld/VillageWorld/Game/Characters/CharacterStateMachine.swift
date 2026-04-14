@@ -32,6 +32,14 @@ final class CharacterStateMachine {
     private var idleTimer:  TimeInterval = 0
     private var isMoving:   Bool         = false
 
+    // MARK: - Working State
+
+    private var workTimer:   TimeInterval = 0
+    private var workTask:    GameTask?    = nil
+
+    /// Called when the worker finishes a task (wired by GameScene).
+    var onTaskCompleted: ((GameTask) -> Void)?
+
     // MARK: - Init
 
     init(
@@ -50,9 +58,20 @@ final class CharacterStateMachine {
     // MARK: - Per-Frame Tick
 
     func update(deltaTime: TimeInterval) {
-        guard let entity, entity.currentState == .idle, !isMoving else { return }
-        idleTimer -= deltaTime
-        if idleTimer <= 0 { startWander() }
+        guard let entity else { return }
+
+        switch entity.currentState {
+        case .idle:
+            guard !isMoving else { return }
+            idleTimer -= deltaTime
+            if idleTimer <= 0 { startWander() }
+
+        case .working:
+            updateWorking(deltaTime: deltaTime)
+
+        case .wandering, .interacting:
+            break
+        }
     }
 
     // MARK: - Interaction API (called by InteractionManager)
@@ -68,6 +87,100 @@ final class CharacterStateMachine {
         guard let entity else { return }
         entity.currentState = .idle
         resetIdleTimer()
+    }
+
+    // MARK: - Working State
+
+    /// Assigns a task: pathfinds to target, then works for task.duration seconds.
+    func enterWorking(task: GameTask) {
+        guard let entity else { return }
+        entity.spriteNode.removeAllActions()
+        isMoving = false
+        entity.currentState = .working
+        entity.currentTask = task
+        workTask = task
+        workTimer = 0
+
+        // Pathfind to task target
+        let current = movement.gridPosition(fromTileMapPoint: entity.spriteNode.position,
+                                            tileMap: tileMap) ?? entity.gridPosition
+
+        if let path = movement.findPath(from: current, to: task.targetPosition), path.count > 1 {
+            isMoving = true
+            let walk = movement.walkAction(along: path, tileMap: tileMap) { [weak entity] pos in
+                entity?.gridPosition = pos
+            }
+            entity.spriteNode.run(.sequence([
+                walk,
+                .run { [weak self] in
+                    self?.isMoving = false
+                    self?.showWorkingBubble()
+                },
+            ]))
+        } else {
+            // Already at target
+            showWorkingBubble()
+        }
+    }
+
+    private func updateWorking(deltaTime: TimeInterval) {
+        guard !isMoving, let task = workTask else { return }
+        workTimer += deltaTime
+        let progress = min(workTimer / task.duration, 1.0)
+
+        if progress >= 1.0 {
+            finishWork()
+        }
+    }
+
+    private func finishWork() {
+        guard let entity, var task = workTask else { return }
+        task.status = .complete
+        task.progress = 1.0
+        entity.currentTask = nil
+        entity.spriteNode.childNode(withName: "workBubble")?.removeFromParent()
+
+        onTaskCompleted?(task)
+
+        workTask = nil
+        workTimer = 0
+        entity.currentState = .idle
+        resetIdleTimer()
+    }
+
+    func cancelWork() {
+        guard let entity else { return }
+        entity.spriteNode.removeAllActions()
+        entity.spriteNode.childNode(withName: "workBubble")?.removeFromParent()
+        entity.currentTask = nil
+        workTask = nil
+        workTimer = 0
+        isMoving = false
+        entity.currentState = .idle
+        resetIdleTimer()
+    }
+
+    private func showWorkingBubble() {
+        guard let entity else { return }
+        entity.spriteNode.childNode(withName: "workBubble")?.removeFromParent()
+
+        let label = SKLabelNode(text: "⚒")
+        label.fontSize = 10
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .center
+
+        let bg = SKSpriteNode(color: .white, size: CGSize(width: 16, height: 16))
+        bg.name = "workBubble"
+        bg.zPosition = 20
+        bg.position = CGPoint(x: 0, y: entity.spriteNode.size.height * 0.5 + 11)
+        bg.addChild(label)
+        entity.spriteNode.addChild(bg)
+
+        // Pulsing animation
+        bg.run(.repeatForever(.sequence([
+            .scale(to: 1.1, duration: 0.5),
+            .scale(to: 0.9, duration: 0.5),
+        ])))
     }
 
     // MARK: - Wander

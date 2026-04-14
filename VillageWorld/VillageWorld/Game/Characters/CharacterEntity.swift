@@ -32,11 +32,61 @@ struct MemoryEntry: Codable {
     let relatedItemID: UUID?   // links to a tech-tree item when applicable
 }
 
-struct GameTask: Identifiable {
-    let id = UUID()
-    var description: String
-    var targetPosition: GridPosition
-    var isComplete: Bool = false
+enum TaskType: Codable, Equatable {
+    case gather(resource: String, amount: Int)
+    case build(techEntryID: UUID)
+    case explore(direction: String)
+}
+
+enum TaskStatus: Codable, Equatable {
+    case queued
+    case inProgress
+    case complete
+    case failed(reason: String)
+}
+
+struct GameTask: Identifiable, Codable {
+    let id: UUID
+    let type: TaskType
+    let assignedTo: UUID        // Character ID
+    let targetPosition: GridPosition
+    let duration: TimeInterval  // game-time seconds
+    var progress: Double        // 0.0 to 1.0
+    var status: TaskStatus
+    let displayName: String     // human-readable task name
+
+    var isComplete: Bool { status == .complete }
+
+    var description: String { displayName }
+
+    init(
+        id: UUID = UUID(),
+        type: TaskType,
+        assignedTo: UUID,
+        targetPosition: GridPosition,
+        duration: TimeInterval = 10.0,
+        progress: Double = 0.0,
+        status: TaskStatus = .queued,
+        displayName: String? = nil
+    ) {
+        self.id = id
+        self.type = type
+        self.assignedTo = assignedTo
+        self.targetPosition = targetPosition
+        self.duration = duration
+        self.progress = progress
+        self.status = status
+        self.displayName = displayName ?? {
+            switch type {
+            case .gather(let resource, let amount):
+                return "Gather \(amount) \(resource)"
+            case .build(let techID):
+                return "Build \(techID.uuidString.prefix(8))"
+            case .explore(let direction):
+                return "Explore \(direction)"
+            }
+        }()
+    }
 }
 
 // MARK: - CharacterEntity

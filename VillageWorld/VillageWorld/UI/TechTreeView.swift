@@ -55,7 +55,7 @@ struct TechTreeView: View {
             Text("No discoveries yet")
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.secondary)
-            Text("Talk to the Researcher or Farmer\nto start discovering!")
+            Text("Talk to the Researcher, Farmer, or Engineer\nto start discovering!")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -110,6 +110,24 @@ struct TechTreeView: View {
                 }
             }
 
+            // Infrastructure requirement (crops/animals)
+            if let infra = entry.infrastructure, !infra.isEmpty {
+                let infraBuilt = appState.techTreeManager.isInfrastructureMet(entry)
+                HStack(spacing: 3) {
+                    Image(systemName: infraBuilt ? "checkmark.circle.fill" : "building.2")
+                        .font(.caption2)
+                        .foregroundStyle(infraBuilt ? .green : .orange)
+                    Text("Requires: \(infra)")
+                        .font(.caption2)
+                        .foregroundStyle(infraBuilt ? .green : .orange)
+                    if infraBuilt {
+                        Text("(built)")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+
             // Difficulty + build time
             HStack {
                 Text(entry.difficulty.rawValue.capitalized)
@@ -131,6 +149,7 @@ struct TechTreeView: View {
         case .technology: return "gearshape.fill"
         case .crop:       return "leaf.fill"
         case .animal:     return "hare.fill"
+        case .component:  return "wrench.and.screwdriver.fill"
         }
     }
 
@@ -139,6 +158,7 @@ struct TechTreeView: View {
         case .technology: return .purple
         case .crop:       return .green
         case .animal:     return .orange
+        case .component:  return .teal
         }
     }
 

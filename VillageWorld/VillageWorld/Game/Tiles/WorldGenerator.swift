@@ -2,8 +2,10 @@
 //  WorldGenerator.swift
 //  VillageWorld
 //
-//  Generates the initial 64×64 grass-plains world procedurally.
-//  All randomisation uses a seeded source so the same world is always produced.
+//  Generates the initial 64×64 world.
+//  Starts as void (dark, unwalkable) and carves a small, smooth
+//  starting biome in the centre using overlapping ellipses for
+//  an organic but clean boundary.
 //
 
 import Foundation
@@ -14,47 +16,97 @@ struct WorldGenerator {
 
     /// Returns a fully populated grid[col][row].
     static func generate() -> [[TileCell]] {
+        // Fill everything with void first
         var grid = Array(
-            repeating: Array(repeating: TileCell.defaultGrass(), count: rows),
+            repeating: Array(repeating: TileCell.void(), count: rows),
             count: columns
         )
+
+        // Carve the starting biome
+        carveStartingBiome(in: &grid)
+
+        // Place features only inside the starting area
         placeWaterBodies(in: &grid)
         placeStoneOutcrops(in: &grid)
         placeDirtPaths(in: &grid)
+
         return grid
     }
 
-    // MARK: - Private Placement Helpers
+    // MARK: - Starting Biome
+
+    /// Carves a smooth grass area around the map centre using overlapping
+    /// ellipses to create an organic but clean boundary.
+    private static func carveStartingBiome(in grid: inout [[TileCell]]) {
+        let cx = Double(columns) / 2.0
+        let cy = Double(rows) / 2.0
+
+        // Several overlapping ellipses create a smooth blob shape
+        let blobs: [(cx: Double, cy: Double, rx: Double, ry: Double)] = [
+            (cx,       cy,       10.0, 9.0),   // main body
+            (cx - 3.0, cy + 2.0, 6.0,  5.0),   // left lobe
+            (cx + 4.0, cy - 1.0, 5.0,  6.0),   // right lobe
+            (cx + 1.0, cy + 4.0, 4.0,  4.5),   // top bump
+            (cx - 1.0, cy - 3.0, 5.0,  4.0),   // bottom bump
+        ]
+
+        for c in 0..<columns {
+            for r in 0..<rows {
+                let x = Double(c)
+                let y = Double(r)
+
+                let inside = blobs.contains { blob in
+                    let dx = (x - blob.cx) / blob.rx
+                    let dy = (y - blob.cy) / blob.ry
+                    return (dx * dx + dy * dy) <= 1.0
+                }
+
+                if inside {
+                    grid[c][r] = TileCell.defaultGrass()
+                }
+            }
+        }
+    }
+
+    // MARK: - Feature Placement
 
     private static func placeWaterBodies(in grid: inout [[TileCell]]) {
+        let cx = columns / 2
+        let cy = rows / 2
         let ponds: [(col: Int, row: Int, radius: Int)] = [
-            (15, 20, 3),
-            (45, 40, 4),
-            (10, 50, 2),
-            (55, 15, 3),
-            (48, 8,  2),
+            (cx - 6, cy + 4, 2),
+            (cx + 5, cy - 3, 2),
         ]
         for pond in ponds {
-            fillCircle(in: &grid, center: (pond.col, pond.row), radius: pond.radius) { _, _ in
-                TileCell(tileType: .water, biomeID: nil, isWalkable: false,
-                         resourceType: nil, resourceAmount: 0, isDiscovered: false)
+            for dc in -pond.radius...pond.radius {
+                for dr in -pond.radius...pond.radius {
+                    let c = pond.col + dc
+                    let r = pond.row + dr
+                    guard inBounds(c, r) else { continue }
+                    guard sqrt(Double(dc * dc + dr * dr)) <= Double(pond.radius) else { continue }
+                    guard grid[c][r].tileType == .grass else { continue }
+                    grid[c][r] = TileCell(tileType: .water, biomeID: nil, isWalkable: false,
+                                          resourceType: nil, resourceAmount: 0, isDiscovered: false)
+                }
             }
         }
     }
 
     private static func placeStoneOutcrops(in grid: inout [[TileCell]]) {
-        // Fixed positions so the starting area (32,32) is clear
+        let cx = columns / 2
+        let cy = rows / 2
         let outcrops: [(col: Int, row: Int)] = [
-            (30, 10), (50, 30), (20, 45), (40, 55), (8, 35)
+            (cx - 8, cy - 2),
+            (cx + 7, cy + 5),
         ]
         var rng = SeededRNG(seed: 42)
         for outcrop in outcrops {
-            for dc in -2...2 {
-                for dr in -2...2 {
+            for dc in -1...1 {
+                for dr in -1...1 {
                     let c = outcrop.col + dc
                     let r = outcrop.row + dr
                     guard inBounds(c, r) else { continue }
-                    guard grid[c][r].tileType != .water else { continue }
+                    guard grid[c][r].tileType == .grass else { continue }
                     if rng.next() % 2 == 0 {
                         grid[c][r] = TileCell(
                             tileType: .stone, biomeID: nil, isWalkable: false,
@@ -67,37 +119,20 @@ struct WorldGenerator {
         }
     }
 
-    /// Thin dirt cross through the centre — acts as the starting village path.
+    /// Short dirt paths through the centre.
     private static func placeDirtPaths(in grid: inout [[TileCell]]) {
         let cx = columns / 2
         let cy = rows / 2
-        for c in 0..<columns where grid[c][cy].isWalkable {
+        let halfPath = 5
+        for c in (cx - halfPath)...(cx + halfPath) where inBounds(c, cy) && grid[c][cy].tileType == .grass {
             grid[c][cy].tileType = .dirt
         }
-        for r in 0..<rows where grid[cx][r].isWalkable {
+        for r in (cy - halfPath)...(cy + halfPath) where inBounds(cx, r) && grid[cx][r].tileType == .grass {
             grid[cx][r].tileType = .dirt
         }
     }
 
     // MARK: - Utilities
-
-    private static func fillCircle(
-        in grid: inout [[TileCell]],
-        center: (col: Int, row: Int),
-        radius: Int,
-        cell: (Int, Int) -> TileCell
-    ) {
-        for dc in -radius...radius {
-            for dr in -radius...radius {
-                let c = center.col + dc
-                let r = center.row + dr
-                guard inBounds(c, r) else { continue }
-                if sqrt(Double(dc * dc + dr * dr)) <= Double(radius) {
-                    grid[c][r] = cell(c, r)
-                }
-            }
-        }
-    }
 
     private static func inBounds(_ col: Int, _ row: Int) -> Bool {
         col >= 0 && col < columns && row >= 0 && row < rows

@@ -15,6 +15,7 @@ enum TechCategory: String, Codable {
     case technology  // from Researcher
     case crop        // from Farmer (plants)
     case animal      // from Farmer (animals)
+    case component   // from Engineer (batteries, motors, gears, etc.)
 }
 
 // MARK: - Tech Status
@@ -37,6 +38,7 @@ struct TechTreeEntry: Identifiable, Codable {
     let difficulty: Difficulty
     var status: TechStatus
     let createdBy: UUID  // character who researched it
+    let infrastructure: String?  // required structure (e.g. "Garden Bed", "Animal Pen")
 
     init(
         id: UUID = UUID(),
@@ -47,7 +49,8 @@ struct TechTreeEntry: Identifiable, Codable {
         buildTimeMinutes: Int,
         difficulty: Difficulty,
         status: TechStatus = .researched,
-        createdBy: UUID
+        createdBy: UUID,
+        infrastructure: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -58,5 +61,6 @@ struct TechTreeEntry: Identifiable, Codable {
         self.difficulty = difficulty
         self.status = status
         self.createdBy = createdBy
+        self.infrastructure = infrastructure
     }
 }

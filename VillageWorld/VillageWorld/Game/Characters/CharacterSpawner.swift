@@ -54,7 +54,7 @@ final class CharacterSpawner {
     private func pickRole() -> CharacterRole {
         Double.random(in: 0...1) < 0.85
             ? .npc
-            : [CharacterRole.researcher, .farmer, .worker].randomElement()!
+            : [CharacterRole.researcher, .farmer, .worker, .engineer].randomElement()!
     }
 
     /// Returns a walkable tile at the boundary of the revealed area
@@ -119,12 +119,19 @@ enum CharacterPersonalities {
         "strong and utterly reliable",
         "prefers doing to talking",
     ]
+    private static let engineer: [String] = [
+        "obsessed with how things fit together",
+        "always sketching blueprints in the dirt",
+        "measures twice, builds once",
+        "dreams of machines that run themselves",
+    ]
 
     static func random(for role: CharacterRole) -> String {
         switch role {
         case .researcher: return researcher.randomElement()!
         case .farmer:     return farmer.randomElement()!
         case .worker:     return worker.randomElement()!
+        case .engineer:   return engineer.randomElement()!
         case .npc:        return npc.randomElement()!
         }
     }

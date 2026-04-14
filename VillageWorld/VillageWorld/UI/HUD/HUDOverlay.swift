@@ -15,14 +15,26 @@ struct HUDOverlay: View {
     var body: some View {
         VStack {
             topBar
+
+            // Biome discovery notification
+            if let note = appState.biomeNotification {
+                biomeNotificationBanner(note)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            withAnimation { appState.biomeNotification = nil }
+                        }
+                    }
+            }
+
             Spacer()
             if let char = appState.selectedCharacter {
                 characterCard(for: char)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            resourceBar
         }
         .animation(.spring(duration: 0.3), value: appState.selectedCharacter?.id)
+        .animation(.spring(duration: 0.4), value: appState.biomeNotification)
     }
 
     // MARK: - Top Bar
@@ -36,19 +48,38 @@ struct HUDOverlay: View {
                 .padding(.leading, 16)
             Spacer()
 
-            // Tech tree button
-            Button {
-                appState.isTechTreeVisible.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "book.closed.fill")
-                        .font(.caption)
-                    Text("\(appState.techTreeManager.entries.count)")
-                        .font(.system(.caption, design: .monospaced).bold())
+            HStack(spacing: 8) {
+                // Resources button
+                Button {
+                    appState.isResourcesVisible.toggle()
+                    if appState.isResourcesVisible { appState.isTechTreeVisible = false }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bag.fill")
+                            .font(.caption)
+                        Text("\(appState.resources.values.reduce(0, +))")
+                            .font(.system(.caption, design: .monospaced).bold())
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+                // Tech tree button
+                Button {
+                    appState.isTechTreeVisible.toggle()
+                    if appState.isTechTreeVisible { appState.isResourcesVisible = false }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "book.closed.fill")
+                            .font(.caption)
+                        Text("\(appState.techTreeManager.entries.count)")
+                            .font(.system(.caption, design: .monospaced).bold())
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
             }
             .padding(.trailing, 16)
         }
@@ -126,10 +157,23 @@ struct HUDOverlay: View {
                 .font(.caption2)
                 .foregroundStyle(.purple.opacity(0.8))
         case .farmer:
-            let crops = appState.techTreeManager.entries.filter { $0.category == .crop || $0.category == .animal }.count
-            Text("Farm plans: \(crops)")
-                .font(.caption2)
-                .foregroundStyle(.green.opacity(0.8))
+            if let task = char.currentTask {
+                Text("Task: \(task.description)")
+                    .font(.caption2)
+                    .foregroundStyle(.green.opacity(0.8))
+            } else {
+                let plans = appState.techTreeManager.entries.filter { $0.category == .crop || $0.category == .animal }.count
+                let ready = appState.techTreeManager.plantableEntries(resources: appState.resources).count
+                if ready > 0 {
+                    Text("Farm plans: \(plans) (\(ready) ready)")
+                        .font(.caption2)
+                        .foregroundStyle(.green.opacity(0.8))
+                } else {
+                    Text("Farm plans: \(plans)")
+                        .font(.caption2)
+                        .foregroundStyle(.green.opacity(0.8))
+                }
+            }
         case .worker:
             if let task = char.currentTask {
                 Text("Task: \(task.description)")
@@ -139,6 +183,17 @@ struct HUDOverlay: View {
                 Text("Idle — ready for work")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+        case .engineer:
+            let count = appState.techTreeManager.entries.filter { $0.category == .component }.count
+            if let task = char.currentTask {
+                Text("Crafting: \(task.description)")
+                    .font(.caption2)
+                    .foregroundStyle(.teal.opacity(0.8))
+            } else {
+                Text("Components designed: \(count)")
+                    .font(.caption2)
+                    .foregroundStyle(.teal.opacity(0.8))
             }
         case .npc:
             if let lastMemory = char.memory.last {
@@ -150,19 +205,22 @@ struct HUDOverlay: View {
         }
     }
 
-    // MARK: - Resource Bar
+    // MARK: - Biome Notification Banner
 
-    private var resourceBar: some View {
-        HStack(spacing: 12) {
-            ResourceChip(icon: "tree.fill",        label: "Wood",  value: appState.resources["Wood"]  ?? 0)
-            ResourceChip(icon: "square.fill",      label: "Stone", value: appState.resources["Stone"] ?? 0)
-            ResourceChip(icon: "leaf.circle.fill", label: "Food",  value: appState.resources["Food"]  ?? 0)
+    private func biomeNotificationBanner(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "leaf.fill")
+                .foregroundStyle(.green)
+            Text(text)
+                .font(.system(.caption, design: .monospaced).bold())
+                .foregroundStyle(.white)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 24)
-        .padding(.bottom, 32)
+        .background(.green.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
     }
 
     // MARK: - Role Colour
@@ -172,27 +230,9 @@ struct HUDOverlay: View {
         case .researcher: return .purple
         case .farmer:     return .green
         case .worker:     return .orange
+        case .engineer:   return .teal
         case .npc:        return .gray
         }
-    }
-}
-
-// MARK: - Resource Chip
-
-private struct ResourceChip: View {
-    let icon:  String
-    let label: String
-    let value: Int
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.caption2).foregroundStyle(.secondary)
-            Text("\(value)").font(.system(.caption, design: .monospaced).bold())
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -16,6 +16,7 @@ enum CharacterRole: String, Codable {
     case researcher
     case farmer
     case worker
+    case engineer
     case npc
 }
 
@@ -36,6 +37,8 @@ enum TaskType: Codable, Equatable {
     case gather(resource: String, amount: Int)
     case build(techEntryID: UUID)
     case explore(direction: String)
+    case craft(techEntryID: UUID)   // Engineer creates a component
+    case plant(techEntryID: UUID)   // Farmer plants a crop or places an animal
 }
 
 enum TaskStatus: Codable, Equatable {
@@ -84,6 +87,10 @@ struct GameTask: Identifiable, Codable {
                 return "Build \(techID.uuidString.prefix(8))"
             case .explore(let direction):
                 return "Explore \(direction)"
+            case .craft(let techID):
+                return "Craft \(techID.uuidString.prefix(8))"
+            case .plant(let techID):
+                return "Plant \(techID.uuidString.prefix(8))"
             }
         }()
     }
@@ -146,6 +153,7 @@ enum CharacterSpriteFactory {
             case .researcher: drawResearcher(ctx)
             case .farmer:     drawFarmer(ctx)
             case .worker:     drawWorker(ctx)
+            case .engineer:   drawEngineer(ctx)
             case .npc:        drawNPC(ctx)
             }
         }
@@ -216,6 +224,31 @@ enum CharacterSpriteFactory {
         // Tool — grey bar on side
         UIColor(red: 0.55, green: 0.55, blue: 0.55, alpha: 1).setFill()
         ctx.fill(CGRect(x: 11, y: 8, width: 2,  height: 6))
+    }
+
+    private static func drawEngineer(_ ctx: CGContext) {
+        // Apron — dark teal
+        UIColor(red: 0.15, green: 0.45, blue: 0.50, alpha: 1).setFill()
+        ctx.fill(CGRect(x: 2, y: 8,  width: 10, height: 10))
+        // Shirt — light grey
+        UIColor(red: 0.75, green: 0.75, blue: 0.78, alpha: 1).setFill()
+        ctx.fill(CGRect(x: 3, y: 8,  width: 8,  height: 3))
+        // Head — pale
+        UIColor(red: 0.90, green: 0.78, blue: 0.65, alpha: 1).setFill()
+        ctx.fill(CGRect(x: 3, y: 1,  width: 8,  height: 7))
+        // Goggles — brass
+        UIColor(red: 0.72, green: 0.55, blue: 0.20, alpha: 1).setFill()
+        ctx.fill(CGRect(x: 3, y: 3,  width: 3,  height: 2))
+        ctx.fill(CGRect(x: 8, y: 3,  width: 3,  height: 2))
+        ctx.fill(CGRect(x: 6, y: 4,  width: 2,  height: 1))
+        // Eyes behind goggles
+        UIColor.black.setFill()
+        ctx.fill(CGRect(x: 4, y: 4,  width: 1,  height: 1))
+        ctx.fill(CGRect(x: 9, y: 4,  width: 1,  height: 1))
+        // Wrench — metallic
+        UIColor(red: 0.60, green: 0.60, blue: 0.65, alpha: 1).setFill()
+        ctx.fill(CGRect(x: 11, y: 9, width: 2,  height: 5))
+        ctx.fill(CGRect(x: 10, y: 9, width: 3,  height: 2))
     }
 
     private static func drawNPC(_ ctx: CGContext) {

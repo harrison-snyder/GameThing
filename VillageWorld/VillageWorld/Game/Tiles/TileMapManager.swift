@@ -55,6 +55,59 @@ final class TileMapManager {
         return GridPosition(col: col, row: row)
     }
 
+    // MARK: - Dynamic Biome Painting (Phase 5)
+
+    /// Creates a tile group from an arbitrary hex color and caches it.
+    /// Returns the group so it can be applied to tiles.
+    func tileGroup(forHex hex: String, detailHex: String? = nil) -> SKTileGroup {
+        if let cached = biomeGroups[hex] { return cached }
+
+        let base = UIColor(hex: hex)
+        let detail = detailHex.map { UIColor(hex: $0) } ?? base.darkened(by: 0.15)
+        let texture = TileMapManager.makeBiomeTexture(base: base, detail: detail)
+        let def = SKTileDefinition(texture: texture,
+                                   size: CGSize(width: TileMapManager.tileSize,
+                                                height: TileMapManager.tileSize))
+        let group = SKTileGroup(tileDefinition: def)
+        group.name = "biome_\(hex)"
+        biomeGroups[hex] = group
+        return group
+    }
+
+    /// Paints a single tile with a biome color group.
+    func paintTile(col: Int, row: Int, group: SKTileGroup) {
+        guard col >= 0, col < TileMapManager.columns,
+              row >= 0, row < TileMapManager.rows else { return }
+        tileMap.setTileGroup(group, forColumn: col, row: row)
+    }
+
+    /// Cache for runtime-generated biome tile groups keyed by hex color.
+    private var biomeGroups: [String: SKTileGroup] = [:]
+
+    /// Draws a 16×16 pixel-art tile for a biome, with noise-style detail.
+    private static func makeBiomeTexture(base: UIColor, detail: UIColor) -> SKTexture {
+        let canvas = CGSize(width: 16, height: 16)
+        let renderer = UIGraphicsImageRenderer(size: canvas)
+        let image = renderer.image { ctx in
+            base.setFill()
+            ctx.fill(CGRect(origin: .zero, size: canvas))
+
+            // Scattered detail pixels for visual noise
+            detail.setFill()
+            let positions: [(Int, Int)] = [
+                (1, 3), (4, 7), (9, 2), (12, 10), (6, 13),
+                (3, 11), (10, 5), (14, 8), (7, 1), (2, 14),
+                (11, 12), (5, 6), (13, 3), (8, 9), (0, 7),
+            ]
+            for (x, y) in positions {
+                ctx.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        let tex = SKTexture(image: image)
+        tex.filteringMode = .nearest
+        return tex
+    }
+
     // MARK: - Private
 
     private func paint(grid: [[TileCell]]) {
@@ -79,6 +132,7 @@ final class TileMapManager {
             (.water, UIColor(r: 51,  g: 115, b: 191)),
             (.stone, UIColor(r: 128, g: 128, b: 133)),
             (.sand,  UIColor(r: 209, g: 194, b: 122)),
+            (.void,  UIColor(r: 18,  g: 18,  b: 22)),
         ]
 
         for (type, baseColor) in palette {
@@ -140,6 +194,14 @@ final class TileMapManager {
                 ctx.fill(CGRect(x: 4,  y: 5, width: 2, height: 1))
                 ctx.fill(CGRect(x: 11, y: 9, width: 2, height: 1))
                 ctx.fill(CGRect(x: 7,  y: 13, width: 2, height: 1))
+
+            case .void:
+                // Subtle dark noise — barely visible texture
+                let dark = UIColor(r: 12, g: 12, b: 16)
+                dark.setFill()
+                ctx.fill(CGRect(x: 3,  y: 7, width: 1, height: 1))
+                ctx.fill(CGRect(x: 10, y: 3, width: 1, height: 1))
+                ctx.fill(CGRect(x: 7,  y: 12, width: 1, height: 1))
             }
         }
 
@@ -159,5 +221,31 @@ private extension UIColor {
             blue:  CGFloat(b) / 255,
             alpha: CGFloat(a) / 255
         )
+    }
+}
+
+// MARK: - UIColor hex init & helpers
+
+extension UIColor {
+    convenience init(hex: String) {
+        var h = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if h.hasPrefix("#") { h.removeFirst() }
+        var rgb: UInt64 = 0
+        Scanner(string: h).scanHexInt64(&rgb)
+        self.init(
+            red:   CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8)  & 0xFF) / 255,
+            blue:  CGFloat( rgb        & 0xFF) / 255,
+            alpha: 1.0
+        )
+    }
+
+    func darkened(by factor: CGFloat) -> UIColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return UIColor(red: max(r - factor, 0),
+                       green: max(g - factor, 0),
+                       blue: max(b - factor, 0),
+                       alpha: a)
     }
 }

@@ -37,7 +37,8 @@ final class TechTreeManager: ObservableObject {
             requirements: reqs.requirements,
             buildTimeMinutes: reqs.buildTimeMinutes,
             difficulty: reqs.difficulty,
-            createdBy: createdBy
+            createdBy: createdBy,
+            infrastructure: reqs.infrastructure
         )
         entries.append(entry)
         return entry
@@ -55,9 +56,46 @@ final class TechTreeManager: ObservableObject {
         return true
     }
 
-    /// Returns entries that a Worker can build right now.
+    /// Returns entries that a Worker can build right now (technology / infrastructure only).
     func buildableEntries(resources: [String: Int]) -> [TechTreeEntry] {
-        entries.filter { $0.status != .built && canBuild($0, resources: resources) }
+        entries.filter {
+            $0.status != .built
+            && $0.category == .technology
+            && canBuild($0, resources: resources)
+        }
+    }
+
+    /// Whether an entry's infrastructure prerequisite (if any) has been built.
+    func isInfrastructureMet(_ entry: TechTreeEntry) -> Bool {
+        guard let infra = entry.infrastructure, !infra.isEmpty else { return true }
+        return entries.contains { $0.name.lowercased() == infra.lowercased() && $0.status == .built }
+    }
+
+    /// Returns crop/animal entries the Farmer can plant/place right now
+    /// (resources met AND infrastructure built).
+    func plantableEntries(resources: [String: Int]) -> [TechTreeEntry] {
+        entries.filter {
+            $0.status != .built
+            && ($0.category == .crop || $0.category == .animal)
+            && canBuild($0, resources: resources)
+            && isInfrastructureMet($0)
+        }
+    }
+
+    /// Returns crop/animal infrastructure entries that need to be built.
+    var pendingInfrastructure: [String] {
+        let needed = Set(
+            entries
+                .filter { ($0.category == .crop || $0.category == .animal) && $0.status != .built }
+                .compactMap(\.infrastructure)
+                .map { $0.lowercased() }
+        )
+        let built = Set(
+            entries
+                .filter { $0.status == .built }
+                .map { $0.name.lowercased() }
+        )
+        return Array(needed.subtracting(built)).sorted()
     }
 
     /// Update status to reflect current resource availability.
@@ -92,5 +130,23 @@ final class TechTreeManager: ObservableObject {
 
     var knownAnimals: [String] {
         entries.filter { $0.category == .animal }.map(\.name)
+    }
+
+    var knownComponents: [String] {
+        entries.filter { $0.category == .component }.map(\.name)
+    }
+
+    /// Components that can be crafted right now (all resource requirements met).
+    func craftableComponents(resources: [String: Int]) -> [TechTreeEntry] {
+        entries.filter { $0.category == .component && $0.status != .built && canBuild($0, resources: resources) }
+    }
+
+    /// Mark a component as crafted: deduct resources, add 1 to the component resource count.
+    /// Returns the resource costs to deduct, or nil if not found.
+    func craftComponent(_ entryID: UUID) -> [ResourceRequirement]? {
+        guard let idx = entries.firstIndex(where: { $0.id == entryID }),
+              entries[idx].category == .component else { return nil }
+        // Components stay craftable (don't mark as .built) — they're repeatable
+        return entries[idx].requirements
     }
 }

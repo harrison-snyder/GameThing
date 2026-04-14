@@ -17,6 +17,7 @@ final class GameScene: SKScene {
 
     var onCharacterTapped: ((CharacterEntity) -> Void)?
     var onTaskCompleted:   ((GameTask) -> Void)?
+    var onBiomeDiscovered: ((BiomeModel) -> Void)?
 
     // MARK: - Nodes
 
@@ -32,6 +33,10 @@ final class GameScene: SKScene {
     private(set) var interactionManager = InteractionManager()
     private var spawner             = CharacterSpawner()
     private let taskQueue           = TaskQueue()
+
+    // Phase 5 — Biomes
+    private(set) var biomeDiscovery = BiomeDiscoveryManager()
+    private let biomeRenderer       = BiomeRenderer()
 
     // MARK: - Grid State
 
@@ -74,6 +79,7 @@ final class GameScene: SKScene {
         buildCamera()
         placeStarterCharacters()
         attachGestureRecognisers(to: view)
+        setupBiomeDiscovery()
     }
 
     // MARK: - World Setup
@@ -92,7 +98,7 @@ final class GameScene: SKScene {
         movement = CharacterMovement(grid:    grid,
                                      columns: TileMapManager.columns,
                                      rows:    TileMapManager.rows)
-        fogOfWar.reveal(around: playerGridPos, radius: 10)
+        fogOfWar.reveal(around: playerGridPos, radius: 13)
     }
 
     private func buildPlayer() {
@@ -122,9 +128,10 @@ final class GameScene: SKScene {
 
     private func placeStarterCharacters() {
         let starters: [(name: String, role: CharacterRole, col: Int, row: Int)] = [
-            ("Sage",  .researcher, 32, 34),
-            ("Rowan", .farmer,     30, 32),
-            ("Stone", .worker,     34, 32),
+            ("Sage",  .researcher, 33, 33),
+            ("Rowan", .farmer,     31, 32),
+            ("Stone", .worker,     33, 31),
+            ("Cog",   .engineer,   31, 33),
         ]
         for s in starters {
             let pos    = GridPosition(col: s.col, row: s.row)
@@ -154,6 +161,42 @@ final class GameScene: SKScene {
             movement: movement,
             tileMap:  tileMapNode,
             grid:     grid
+        )
+    }
+
+    // MARK: - Phase 5 — Biome Discovery Setup
+
+    /// Tech entry count, set by AppState each time the tree changes.
+    var techEntryCount: Int = 0
+
+    private func setupBiomeDiscovery() {
+        biomeDiscovery.biomeRenderer = biomeRenderer
+
+        // When the generator finishes, we need to render with the mutable grid
+        biomeDiscovery.onBiomeReady = { [weak self] template, playerPos, existing, tileMgr, fog, scene in
+            guard let self else { return }
+            let biome = self.biomeRenderer.render(
+                template: template,
+                grid: &self.grid,
+                tileMapManager: tileMgr,
+                fogOfWar: fog,
+                scene: scene,
+                playerPosition: playerPos,
+                existingBiomes: existing
+            )
+            self.biomeDiscovery.registerBiome(biome)
+            self.onBiomeDiscovered?(biome)
+        }
+    }
+
+    /// Called when an explore task completes — triggers biome discovery.
+    func triggerBiomeFromExplore(around position: GridPosition) {
+        biomeDiscovery.triggerExploreDiscovery(
+            playerPosition: position,
+            grid: &grid,
+            tileMapManager: tileMapManager,
+            fogOfWar: fogOfWar,
+            scene: self
         )
     }
 
@@ -311,6 +354,18 @@ final class GameScene: SKScene {
 
         // Proximity interactions
         interactionManager.update(deltaTime: dt, characters: characters, tileMap: tileMapNode)
+
+        // Biome discovery triggers (Phase 5)
+        biomeDiscovery.update(
+            deltaTime: dt,
+            populationCount: characters.count,
+            techEntryCount: techEntryCount,
+            playerPosition: playerGridPos,
+            grid: &grid,
+            tileMapManager: tileMapManager,
+            fogOfWar: fogOfWar,
+            scene: self
+        )
 
         // NPC spawning
         if let newChar = spawner.update(deltaTime: dt,

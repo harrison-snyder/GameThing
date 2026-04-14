@@ -179,7 +179,14 @@ actor LLMService {
 
     private func stubGenerate(system: String, user: String) -> AsyncStream<String> {
         let role     = detectRole(in: system)
-        let response = StubResponses.pick(role: role, userInput: user)
+        // Requirements prompts ask for JSON — return stub JSON instead of chat text
+        let isJsonRequest = system.lowercased().contains("respond only with the requested json")
+        let response: String
+        if isJsonRequest {
+            response = StubResponses.requirementsJSON(role: role, userInput: user)
+        } else {
+            response = StubResponses.pick(role: role, userInput: user)
+        }
         return streamWords(response)
     }
 
@@ -213,8 +220,51 @@ private enum StubResponses {
         case "researcher": return researcher.randomElement()!
         case "farmer":     return farmer.randomElement()!
         case "worker":     return worker.randomElement()!
+        case "engineer":   return engineer.randomElement()!
         default:           return npc.randomElement()!
         }
+    }
+
+    /// Returns a valid JSON stub for offline requirements generation.
+    /// Uses the item name from the user prompt to build plausible requirements.
+    static func requirementsJSON(role: String, userInput: String) -> String {
+        // Extract the item name from the prompt ("The player wants to build/grow/raise: <item>")
+        let item: String
+        if let range = userInput.range(of: ": ", options: .backwards) {
+            item = String(userInput[range.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            item = "item"
+        }
+
+        let pools: [([[String: Any]], Int, String)] = [
+            ([["resource": "wood",    "amount": 6, "biome_hint": "Forest"],
+              ["resource": "iron",    "amount": 3, "biome_hint": "Mountains"]], 12, "medium"),
+            ([["resource": "clay",    "amount": 5, "biome_hint": "Riverbank"],
+              ["resource": "fiber",   "amount": 4, "biome_hint": "Grass Plains"]], 8, "easy"),
+            ([["resource": "stone",   "amount": 8, "biome_hint": "Mountains"],
+              ["resource": "coal",    "amount": 3, "biome_hint": "Mountains"]], 20, "hard"),
+            ([["resource": "leather", "amount": 4, "biome_hint": "Savanna"],
+              ["resource": "bone",    "amount": 2, "biome_hint": "Savanna"]], 10, "medium"),
+            ([["resource": "glass",   "amount": 3, "biome_hint": "Desert"],
+              ["resource": "sand",    "amount": 5, "biome_hint": "Desert"]], 15, "medium"),
+            ([["resource": "silk",    "amount": 3, "biome_hint": "Forest"],
+              ["resource": "dye",     "amount": 2, "biome_hint": "Meadow"]], 7, "easy"),
+            ([["resource": "resin",   "amount": 4, "biome_hint": "Forest"],
+              ["resource": "wood",    "amount": 3, "biome_hint": "Forest"]], 9, "easy"),
+            ([["resource": "copper",  "amount": 5, "biome_hint": "Mountains"],
+              ["resource": "tin",     "amount": 3, "biome_hint": "Mountains"]], 18, "hard"),
+        ]
+
+        let idx = abs(item.hashValue) % pools.count
+        let (reqs, time, diff) = pools[idx]
+        let reqsJSON = reqs.map { r in
+            "{\"resource\":\"\(r["resource"]!)\",\"amount\":\(r["amount"]!),\"biome_hint\":\"\(r["biome_hint"]!)\"}"
+        }.joined(separator: ",")
+
+        return """
+        {"item_name":"\(item)","description":"A \(item) crafted using local materials.","requirements":[\(reqsJSON)],"build_time_minutes":\(time),"difficulty":"\(diff)"}
+        """
     }
 
     static let researcher = [
@@ -239,6 +289,14 @@ private enum StubResponses {
         "Nothing a bit of hard work can't fix. Let me take a look at what we need.",
         "I can handle that. Stone, wood, and steady hands — that's what construction takes.",
         "Ready when you are. I'll start clearing the site right away.",
+    ]
+
+    static let engineer = [
+        "Now that's a challenge I can sink my teeth into. Let me sketch out the blueprints.",
+        "I've been tinkering with something similar. The key is getting the right components together.",
+        "Give me the raw materials and I'll forge you something extraordinary. Precision is my specialty.",
+        "Every great machine starts with a single gear. Let me figure out what we need.",
+        "I can build that! We'll need some specific parts — let me work out the material list.",
     ]
 
     static let npc = [

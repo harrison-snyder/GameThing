@@ -36,6 +36,14 @@ struct ContentView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     .animation(.spring(duration: 0.25), value: appState.isTechTreeVisible)
             }
+
+            // Resources overlay
+            if appState.isResourcesVisible {
+                ResourcesView()
+                    .environmentObject(appState)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .animation(.spring(duration: 0.25), value: appState.isResourcesVisible)
+            }
         }
         .statusBarHidden()
     }

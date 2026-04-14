@@ -21,6 +21,10 @@ enum DialogueMode: Equatable {
     case farmPhoto           // farmer: show a photo
     case checkFarm           // farmer: check farm progress
     case workerTasks         // worker: pick a task
+    case engineerInput       // engineer: design a component
+    case engineerPhoto       // engineer: show a photo
+    case checkComponents     // engineer: check component progress
+    case engineerTasks       // engineer: craft a component
 }
 
 // MARK: - DialogueView
@@ -59,12 +63,12 @@ struct DialogueView: View {
             }
 
             // Photo picker bar (shown in photo modes)
-            if dialogueMode == .researchPhoto || dialogueMode == .farmPhoto {
+            if dialogueMode == .researchPhoto || dialogueMode == .farmPhoto || dialogueMode == .engineerPhoto {
                 photoBar
             }
 
-            // Input bar (shown in chat/research/farm modes)
-            if dialogueMode == .chat || dialogueMode == .researchTech || dialogueMode == .farmInput {
+            // Input bar (always shown except in photo mode)
+            if dialogueMode != .researchPhoto && dialogueMode != .farmPhoto && dialogueMode != .engineerPhoto {
                 inputBar
             }
         }
@@ -118,6 +122,8 @@ struct DialogueView: View {
                 farmerActions
             case .worker:
                 workerActions
+            case .engineer:
+                engineerActions
             case .npc:
                 EmptyView()
             }
@@ -127,42 +133,50 @@ struct DialogueView: View {
     private var researcherActions: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                actionButton("Tell about technology", icon: "lightbulb.fill") {
+                // Sets placeholder — sending always routes to handleResearcherInput
+                actionButton("Research technology", icon: "lightbulb.fill") {
                     dialogueMode = .researchTech
-                    appState.dialogueText = "What technology would you like to tell me about? Type its name below!"
                 }
                 actionButton("Show a photo", icon: "camera.fill") {
                     dialogueMode = .researchPhoto
                     showPhotoPicker = true
                 }
                 actionButton("Check research", icon: "list.clipboard") {
-                    dialogueMode = .checkResearch
                     appState.showResearchProgress()
-                }
-                actionButton("Just chat", icon: "bubble.left") {
-                    dialogueMode = .chat
                 }
             }
         }
     }
 
     private var farmerActions: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                actionButton("Tell about plant/animal", icon: "leaf.fill") {
-                    dialogueMode = .farmInput
-                    appState.dialogueText = "What plant or animal would you like to tell me about? Type its name below!"
+        VStack(spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    actionButton("Tell about plant/animal", icon: "leaf.fill") {
+                        dialogueMode = .farmInput
+                    }
+                    actionButton("Show a photo", icon: "camera.fill") {
+                        dialogueMode = .farmPhoto
+                        showPhotoPicker = true
+                    }
+                    actionButton("Check farm", icon: "list.clipboard") {
+                        appState.showFarmProgress()
+                    }
                 }
-                actionButton("Show a photo", icon: "camera.fill") {
-                    dialogueMode = .farmPhoto
-                    showPhotoPicker = true
-                }
-                actionButton("Check farm", icon: "list.clipboard") {
-                    dialogueMode = .checkFarm
-                    appState.showFarmProgress()
-                }
-                actionButton("Just chat", icon: "bubble.left") {
-                    dialogueMode = .chat
+            }
+
+            // Plant/place tasks — crops and animals ready to go
+            let farmTasks = appState.availableFarmerTasks()
+            if !farmTasks.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(farmTasks, id: \.description) { task in
+                            actionButton(task.description, icon: taskIcon(task.type)) {
+                                appState.assignTask(task)
+                                appState.endDialogue()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -190,6 +204,40 @@ struct DialogueView: View {
             }
             actionButton("Just chat", icon: "bubble.left") {
                 dialogueMode = .chat
+            }
+        }
+    }
+
+    private var engineerActions: some View {
+        VStack(spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    actionButton("Design component", icon: "gearshape.2.fill") {
+                        dialogueMode = .engineerInput
+                    }
+                    actionButton("Show a photo", icon: "camera.fill") {
+                        dialogueMode = .engineerPhoto
+                        showPhotoPicker = true
+                    }
+                    actionButton("Check components", icon: "list.clipboard") {
+                        appState.showComponentProgress()
+                    }
+                }
+            }
+
+            // Craft tasks — show craftable components
+            let craftTasks = appState.availableEngineerTasks()
+            if !craftTasks.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(craftTasks, id: \.description) { task in
+                            actionButton(task.description, icon: "hammer.fill") {
+                                appState.assignTask(task)
+                                appState.endDialogue()
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -241,18 +289,21 @@ struct DialogueView: View {
 
     private var inputPlaceholder: String {
         switch dialogueMode {
-        case .researchTech:  return "Name a technology..."
-        case .farmInput:     return "Name a plant or animal..."
-        default:             return "Say something..."
+        case .researchTech:   return "Name a technology..."
+        case .farmInput:      return "Name a plant or animal..."
+        case .engineerInput:  return "Name a component..."
+        default:              return "Say something..."
         }
     }
 
     private func sendForMode(_ text: String) {
-        switch dialogueMode {
-        case .researchTech:
+        switch appState.dialogueCharacter?.role {
+        case .researcher:
             appState.handleResearcherInput(text: text)
-        case .farmInput:
+        case .farmer:
             appState.handleFarmerInput(text: text)
+        case .engineer:
+            appState.handleEngineerInput(text: text)
         default:
             appState.sendMessage(text)
         }
@@ -274,6 +325,8 @@ struct DialogueView: View {
         case .gather:  return "cube.fill"
         case .build:   return "hammer.fill"
         case .explore: return "binoculars.fill"
+        case .craft:   return "gearshape.fill"
+        case .plant:   return "leaf.arrow.circlepath"
         }
     }
 
@@ -282,6 +335,7 @@ struct DialogueView: View {
         case .researcher: return .purple
         case .farmer:     return .green
         case .worker:     return .orange
+        case .engineer:   return .teal
         case .npc:        return .gray
         }
     }

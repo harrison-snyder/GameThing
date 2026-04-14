@@ -50,6 +50,12 @@ final class AppState: ObservableObject {
     // MARK: - Tech Tree UI
 
     @Published var isTechTreeVisible: Bool = false
+    @Published var isResourcesVisible: Bool = false
+
+    // MARK: - Phase 5 — Biome State
+
+    @Published var discoveredBiomeNames: [String] = ["Grass Plains"]
+    @Published var biomeNotification: String? = nil
 
     // MARK: - Event Log (for InteractionContext)
 
@@ -62,7 +68,8 @@ final class AppState: ObservableObject {
             knownTechnologies: techTreeManager.knownTechnologies,
             knownCrops:        techTreeManager.knownCrops,
             knownAnimals:      techTreeManager.knownAnimals,
-            knownBiomes:       ["Grass Plains"],
+            knownComponents:   techTreeManager.knownComponents,
+            knownBiomes:       discoveredBiomeNames,
             knownResources:    Array(resources.keys),
             recentEvents:      Array(recentEvents.suffix(5))
         )
@@ -174,7 +181,8 @@ final class AppState: ObservableObject {
                 itemName: text,
                 role: .researcher,
                 knownBiomes: context.knownBiomes,
-                knownResources: context.knownResources
+                knownResources: context.knownResources,
+                knownComponents: context.knownComponents
             )
 
             // Add to tech tree
@@ -184,6 +192,8 @@ final class AppState: ObservableObject {
                 createdBy: character.id
             )
 
+            registerResources(for: entry)
+
             // Update memory with the item reference
             character.memory.append(MemoryEntry(
                 timestamp: Date(),
@@ -192,6 +202,7 @@ final class AppState: ObservableObject {
             ))
 
             techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
             recentEvents.append("\(character.name) researched \(entry.name)")
 
             dialogueText += "\n\n[Added to Tech Tree: \(entry.name)]"
@@ -243,7 +254,8 @@ final class AppState: ObservableObject {
                 itemName: text,
                 role: .farmer,
                 knownBiomes: context.knownBiomes,
-                knownResources: context.knownResources
+                knownResources: context.knownResources,
+                knownComponents: context.knownComponents
             )
 
             let entry = techTreeManager.addEntry(
@@ -252,17 +264,112 @@ final class AppState: ObservableObject {
                 createdBy: character.id
             )
 
+            registerResources(for: entry)
+
+            // Auto-create infrastructure entry if needed and not already known
+            if let infra = reqs.infrastructure, !infra.isEmpty {
+                ensureInfrastructureEntry(named: infra, for: entry, character: character, context: context)
+            }
+
             character.memory.append(MemoryEntry(
                 timestamp: Date(),
-                summary: "Planned \(category.rawValue) \(entry.name): needs \(reqs.requirements.map { "\($0.amount) \($0.resource)" }.joined(separator: ", "))",
+                summary: "Planned \(category.rawValue) \(entry.name): needs \(reqs.requirements.map { "\($0.amount) \($0.resource)" }.joined(separator: ", "))" +
+                    (reqs.infrastructure.map { " (requires \($0))" } ?? ""),
                 relatedItemID: entry.id
             ))
 
             techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
             recentEvents.append("\(character.name) planned \(entry.name)")
 
-            dialogueText += "\n\n[Added to Tech Tree: \(entry.name)]"
+            var addedText = "\n\n[Added to Tech Tree: \(entry.name)]"
+            if let infra = reqs.infrastructure, !infra.isEmpty {
+                let infraBuilt = techTreeManager.entries.contains {
+                    $0.name.lowercased() == infra.lowercased() && $0.status == .built
+                }
+                if !infraBuilt {
+                    addedText += "\n[Requires: \(infra) — ask the Worker to build it first]"
+                }
+            }
+            dialogueText += addedText
             isGenerating = false
+        }
+    }
+
+    // MARK: - Engineer Interaction Flow
+
+    func handleEngineerInput(text: String) {
+        guard let character = dialogueCharacter else { return }
+        dialogueText = ""
+        isGenerating = true
+
+        character.memory.append(MemoryEntry(
+            timestamp: Date(),
+            summary: "Player asked me to create component: \(text)",
+            relatedItemID: nil
+        ))
+
+        Task {
+            let context = buildContext()
+            let stream = await dialogueGenerator.generateDialogue(
+                character: character,
+                playerInput: "I need you to figure out how to craft this component: \(text). What materials do you need?",
+                context: context
+            )
+
+            var gotTokens = false
+            for await token in stream {
+                gotTokens = true
+                dialogueText += token
+            }
+
+            if !gotTokens {
+                dialogueText = "Interesting challenge! Let me work out the materials for \(text)..."
+            }
+
+            let reqs = await requirementsGenerator.generate(
+                itemName: text,
+                role: .engineer,
+                knownBiomes: context.knownBiomes,
+                knownResources: context.knownResources,
+                knownComponents: context.knownComponents
+            )
+
+            let entry = techTreeManager.addEntry(
+                from: reqs,
+                category: .component,
+                createdBy: character.id
+            )
+
+            registerResources(for: entry)
+
+            character.memory.append(MemoryEntry(
+                timestamp: Date(),
+                summary: "Designed component \(entry.name): needs \(reqs.requirements.map { "\($0.amount) \($0.resource)" }.joined(separator: ", "))",
+                relatedItemID: entry.id
+            ))
+
+            techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
+            recentEvents.append("\(character.name) designed component: \(entry.name)")
+
+            dialogueText += "\n\n[Component Added: \(entry.name)]"
+            isGenerating = false
+        }
+    }
+
+    func showComponentProgress() {
+        let components = techTreeManager.entries.filter { $0.category == .component }
+        if components.isEmpty {
+            dialogueText = "I haven't designed any components yet! Tell me what you need built."
+        } else {
+            let lines = components.map { entry in
+                let canCraft = techTreeManager.canBuild(entry, resources: resources)
+                let count = resources[entry.name.capitalized] ?? resources[entry.name] ?? 0
+                let status = canCraft ? "Ready to craft" : "Needs materials"
+                return "- \(entry.name) (have \(count)): \(status)"
+            }
+            dialogueText = "Here are my component designs:\n\n" + lines.joined(separator: "\n")
         }
     }
 
@@ -288,6 +395,10 @@ final class AppState: ObservableObject {
                     dialogueText += "Let me think about how we can grow or raise this..."
                     isGenerating = false
                     handleFarmerInput(text: label)
+                } else if character.role == .engineer {
+                    dialogueText += "Let me figure out how to make this as a component..."
+                    isGenerating = false
+                    handleEngineerInput(text: label)
                 }
             } catch {
                 dialogueText = "Hmm, I couldn't quite make out what that is. Could you describe it instead?"
@@ -317,13 +428,97 @@ final class AppState: ObservableObject {
         if farms.isEmpty {
             dialogueText = "We haven't planned any farming yet! Tell me about a plant or animal."
         } else {
-            let lines = farms.map { entry in
-                let status = entry.status == .built ? "Growing/Raised" :
-                             entry.status == .requirementsMet ? "Ready to start" : "Needs resources"
-                return "- \(entry.name) (\(entry.category.rawValue)): \(status)"
+            let lines = farms.map { entry -> String in
+                if entry.status == .built {
+                    let verb = entry.category == .animal ? "Raised" : "Growing"
+                    return "- \(entry.name) (\(entry.category.rawValue)): \(verb)"
+                }
+
+                let infraMet = techTreeManager.isInfrastructureMet(entry)
+                let resourcesMet = techTreeManager.canBuild(entry, resources: resources)
+
+                if !infraMet {
+                    return "- \(entry.name) (\(entry.category.rawValue)): Needs \(entry.infrastructure ?? "infrastructure")"
+                } else if !resourcesMet {
+                    return "- \(entry.name) (\(entry.category.rawValue)): Needs resources"
+                } else {
+                    let verb = entry.category == .animal ? "Ready to place" : "Ready to plant"
+                    return "- \(entry.name) (\(entry.category.rawValue)): \(verb)"
+                }
             }
             dialogueText = "Here's our farming progress:\n\n" + lines.joined(separator: "\n")
         }
+    }
+
+    // MARK: - Resource Helpers
+
+    /// Ensures every resource named in a tech entry exists in the inventory (at 0 if new).
+    private func registerResources(for entry: TechTreeEntry) {
+        for req in entry.requirements {
+            let key = req.resource.capitalized
+            if resources[key] == nil {
+                resources[key] = 0
+            }
+        }
+    }
+
+    /// Auto-creates a technology entry for infrastructure (e.g. Garden Bed, Animal Pen)
+    /// if one doesn't already exist.
+    private func ensureInfrastructureEntry(
+        named name: String,
+        for parentEntry: TechTreeEntry,
+        character: CharacterEntity,
+        context: InteractionContext
+    ) {
+        let alreadyExists = techTreeManager.entries.contains {
+            $0.name.lowercased() == name.lowercased()
+        }
+        guard !alreadyExists else { return }
+
+        Task {
+            let reqs = await requirementsGenerator.generate(
+                itemName: name,
+                role: .researcher,
+                knownBiomes: context.knownBiomes,
+                knownResources: context.knownResources,
+                knownComponents: context.knownComponents
+            )
+
+            let infraEntry = techTreeManager.addEntry(
+                from: reqs,
+                category: .technology,
+                createdBy: character.id
+            )
+            registerResources(for: infraEntry)
+            techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
+            recentEvents.append("Infrastructure needed: \(infraEntry.name)")
+        }
+    }
+
+    // MARK: - Farmer Tasks
+
+    /// Generates tasks the Farmer can perform: planting crops and placing animals
+    /// whose infrastructure is built and resources are available.
+    func availableFarmerTasks() -> [GameTask] {
+        guard let character = dialogueCharacter else { return [] }
+        let center = character.gridPosition
+        var tasks: [GameTask] = []
+
+        for entry in techTreeManager.plantableEntries(resources: resources) {
+            let offset = GridPosition(col: center.col + Int.random(in: -3...3),
+                                      row: center.row + Int.random(in: -3...3))
+            let verb = entry.category == .animal ? "Place" : "Plant"
+            tasks.append(GameTask(
+                type: .plant(techEntryID: entry.id),
+                assignedTo: character.id,
+                targetPosition: offset,
+                duration: Double(entry.buildTimeMinutes) * 2.0,
+                displayName: "\(verb) \(entry.name)"
+            ))
+        }
+
+        return tasks
     }
 
     // MARK: - Worker Tasks
@@ -334,8 +529,14 @@ final class AppState: ObservableObject {
         var tasks: [GameTask] = []
         let center = character.gridPosition
 
-        // Gather tasks — always available if there are resources on the map
-        for resource in ["Wood", "Stone", "Food"] {
+        // Gather tasks — dynamically include any resource the tech tree needs
+        var neededResources = Set(resources.keys)
+        for entry in techTreeManager.entries where entry.status != .built {
+            for req in entry.requirements {
+                neededResources.insert(req.resource.capitalized)
+            }
+        }
+        for resource in neededResources.sorted() {
             let offset = GridPosition(col: center.col + Int.random(in: -5...5),
                                       row: center.row + Int.random(in: -5...5))
             tasks.append(GameTask(
@@ -380,6 +581,29 @@ final class AppState: ObservableObject {
         return tasks
     }
 
+    /// Generates the list of components an Engineer can craft right now.
+    func availableEngineerTasks() -> [GameTask] {
+        guard let character = dialogueCharacter else { return [] }
+        let center = character.gridPosition
+
+        var tasks: [GameTask] = []
+
+        // Craft tasks — from component entries with requirements met
+        for entry in techTreeManager.craftableComponents(resources: resources) {
+            let offset = GridPosition(col: center.col + Int.random(in: -3...3),
+                                      row: center.row + Int.random(in: -3...3))
+            tasks.append(GameTask(
+                type: .craft(techEntryID: entry.id),
+                assignedTo: character.id,
+                targetPosition: offset,
+                duration: Double(entry.buildTimeMinutes) * 2.0,
+                displayName: "Craft \(entry.name)"
+            ))
+        }
+
+        return tasks
+    }
+
     /// Assigns a task to the worker character and starts working.
     func assignTask(_ task: GameTask) {
         guard let character = dialogueCharacter else { return }
@@ -403,6 +627,7 @@ final class AppState: ObservableObject {
             resources[key, default: 0] += amount
             recentEvents.append("Gathered \(amount) \(resource)")
             techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
 
         case .build(let techEntryID):
             if let costs = techTreeManager.markBuilt(techEntryID) {
@@ -416,10 +641,43 @@ final class AppState: ObservableObject {
                 }
             }
             techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
 
         case .explore(let direction):
             recentEvents.append("Explored \(direction) — revealed new area")
             gameScene.revealExploredArea(around: task.targetPosition)
+            gameScene.triggerBiomeFromExplore(around: task.targetPosition)
+
+        case .craft(let techEntryID):
+            if let costs = techTreeManager.craftComponent(techEntryID) {
+                for cost in costs {
+                    let key = cost.resource.capitalized
+                    resources[key, default: 0] = max(0, (resources[key] ?? 0) - cost.amount)
+                }
+                if let entry = techTreeManager.entries.first(where: { $0.id == techEntryID }) {
+                    // Add the crafted component to resources
+                    let componentKey = entry.name.capitalized
+                    resources[componentKey, default: 0] += 1
+                    recentEvents.append("Crafted \(entry.name)!")
+                }
+            }
+            techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
+
+        case .plant(let techEntryID):
+            if let costs = techTreeManager.markBuilt(techEntryID) {
+                for cost in costs {
+                    let key = cost.resource.capitalized
+                    resources[key, default: 0] = max(0, (resources[key] ?? 0) - cost.amount)
+                }
+                if let entry = techTreeManager.entries.first(where: { $0.id == techEntryID }) {
+                    let verb = entry.category == .animal ? "Placed" : "Planted"
+                    recentEvents.append("\(verb) \(entry.name)!")
+                    gameScene.placeBuiltItem(name: entry.name, near: task.targetPosition)
+                }
+            }
+            techTreeManager.refreshStatuses(resources: resources)
+            syncTechCount()
         }
     }
 
@@ -459,5 +717,34 @@ final class AppState: ObservableObject {
         scene.interactionManager.interactionContext = { [weak self] in
             self?.buildContext() ?? InteractionContext()
         }
+
+        // Phase 5 — wire biome discovery
+        scene.biomeDiscovery.biomeGenerator = biomeGenerator
+        scene.biomeDiscovery.onBiomeDiscovered = { [weak self] biome in
+            guard let self else { return }
+            let name = biome.template.name
+            if !self.discoveredBiomeNames.contains(name) {
+                self.discoveredBiomeNames.append(name)
+            }
+            // Register biome resources in the inventory
+            for res in biome.template.resources {
+                let key = res.name.capitalized
+                if self.resources[key] == nil {
+                    self.resources[key] = 0
+                }
+            }
+            self.recentEvents.append("Discovered new biome: \(name)")
+            self.biomeNotification = "New Biome: \(name)"
+        }
+
+        // Keep GameScene's tech count in sync for biome triggers
+        scene.onBiomeDiscovered = { _ in }  // placeholder, real callback above
+    }
+
+    // MARK: - Tech Count Sync
+
+    /// Called after any tech tree change to keep GameScene's trigger counter current.
+    private func syncTechCount() {
+        gameScene.techEntryCount = techTreeManager.entries.count
     }
 }

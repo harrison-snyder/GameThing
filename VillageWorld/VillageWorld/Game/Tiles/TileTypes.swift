@@ -13,6 +13,7 @@ enum TileType: Int, Codable, CaseIterable {
     case water = 2
     case stone = 3
     case sand  = 4
+    case void  = 5   // unexplored territory — dark, unwalkable
 }
 
 // MARK: - Resource Type
@@ -41,6 +42,11 @@ struct TileCell: Codable {
 
     static func water() -> TileCell {
         TileCell(tileType: .water, biomeID: nil, isWalkable: false,
+                 resourceType: nil, resourceAmount: 0, isDiscovered: false)
+    }
+
+    static func void() -> TileCell {
+        TileCell(tileType: .void, biomeID: nil, isWalkable: false,
                  resourceType: nil, resourceAmount: 0, isDiscovered: false)
     }
 }
